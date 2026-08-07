@@ -1,115 +1,84 @@
-# Financial Help for Your Hospital Bill
+# Lab Intelligence
 
-A deterministic screener that tells patients what hospital financial assistance
-they likely qualify for — and exactly what to do next. Michigan only, for now.
+Turns a lab report (PDF or phone photo) into plain-English explanations of
+each biomarker, and tracks values over time so trends are visible instead of
+isolated snapshots. That longitudinal view is the entire product — most
+people get a lab report, see a wall of acronyms, and never see what their
+own numbers have done over five years.
 
-Every nonprofit hospital in the U.S. is required by federal law (IRC §501(r))
-to have a written Financial Assistance Policy. Most patients are never told it
-exists — research puts the share of eligible patients who actually receive
-assistance at roughly 29%, largely because about half are never informed.
-This closes that gap: answer a few questions, get a ranked, personalized
-action plan with copy-ready scripts.
+No clinicians, no diagnosis, no treatment advice, no urgency detection.
+These are hard architectural requirements, not preferences — they're what
+keeps this out of FDA medical device territory.
 
-This is not a chatbot. It's a plain deterministic screener — the value is
-precision and specificity, not conversation.
+## The core architectural decision: the AI extracts, it does not interpret
 
-## Privacy by construction
+A language model is never allowed to freely generate a medical explanation
+from a lab value. The system is split into three layers:
 
-No answer ever leaves the browser. There's no backend, no accounts, no
-storage, no analytics beyond page views. Everything — the eligibility
-calculation, the script generation — runs as pure client-side functions.
+1. **Extraction (AI):** OCR + structured parsing turns a document into typed
+   records — biomarker name, value, unit, reference range, collection date.
+   A data problem, not a medical one.
+2. **Content (human/AI-drafted, must eventually be clinician-reviewed):** a
+   curated library of explanations, one per biomarker — what it measures,
+   why it's ordered, what's known to move it, questions to ask a doctor.
+   Static, versioned, cited.
+3. **Assembly (AI, tightly constrained):** composes the user-facing text
+   using *only* the content library entry plus the user's own numbers. It
+   may not introduce a medical claim that isn't already in the library. A
+   biomarker with no library entry displays its value and trend with no
+   explanation, rather than the model improvising one.
 
-## Stack
+If the model can generate a sentence about a person's health that no human
+wrote and reviewed, the architecture is wrong.
 
-Vanilla TypeScript, hand-written CSS, no framework — bundled with esbuild to
-keep the whole app under a 100KB budget (currently ~28KB total), because the
-person using this is assumed to be on an older phone on a slow connection.
-[Vitest](https://vitest.dev) for the screening-logic test suite.
+## What's built so far
 
-## Project structure
+- **`lib/types.ts`** — `LabReport`, `BiomarkerResult`, `BiomarkerContent`,
+  and `UnitConversion` (supports both pure-multiplicative conversions and
+  affine ones — HbA1c's NGSP-to-IFCC conversion is `% × 10.929 − 23.5`, not
+  a pure scale, and modeling only linear conversions would silently get it
+  wrong).
+- **`lib/units.ts`** — `toSI` / `fromSI`, tested against real reference
+  points (100 mg/dL glucose ≈ 5.55 mmol/L, 7.0% NGSP HbA1c ≈ 53 mmol/mol
+  IFCC).
+- **`data/biomarkerContent.ts`** — content library for the 10 starter
+  biomarkers (TSH, Free T4, Free T3, TPO antibodies, WBC, RBC, hemoglobin,
+  hematocrit, platelets, MCV), each with a plain-language explanation, why
+  it's typically ordered, non-prescriptive factors known to move it,
+  questions to bring to a doctor, and cited sources.
+- **`data/biomarkerContent.test.ts`** — an adversarial scan across every
+  content field for six categories of forbidden output (diagnosis/condition
+  naming, treatment or dosage advice, urgency language, risk scoring,
+  "normal"/"abnormal" verdicts, reassurance). It already caught and fixed
+  two real violations while this was being written — this is the backstop
+  the assembly layer will also need once it exists.
 
-```
-index.html              Page shell
-src/styles.css           Hand-written CSS, WCAG AA, mobile-first
-src/app/main.ts            Vanilla DOM app: intake flow + results rendering
-src/app/dom.ts               Minimal element-building helper
-src/data/fpl.ts              2026 HHS Federal Poverty Guidelines
-src/data/hospitals.ts        Michigan hospital financial assistance data
-src/data/types.ts            Shared types (Hospital, IncomeRange, etc.)
-src/data/incomeRanges.ts     Income bands used in the intake
-src/data/billAmounts.ts      Bill-amount bands used in the intake
-src/data/answers.ts          Answers shape for the intake flow
-src/lib/screening.ts         Pure eligibility screening logic (tested)
-src/lib/results.ts           Builds the ranked action plan from a screening result
-src/lib/scripts.ts           Phone / email script generators
-scripts/build.mjs            esbuild bundler, warns if over the 100KB budget
-```
+## Read this before trusting the content library
 
-## The screening logic
+Every entry's `reviewStatus` is `"ai_drafted_sourced"`, not
+`"clinician_reviewed"`. That's an honest distinction, not a formality: these
+were researched against the cited sources (mostly MedlinePlus and Mayo
+Clinic) and written to the same content rules the spec requires, but a
+human clinician has not reviewed them the way the architecture calls for.
+Don't flip that field until that's actually happened.
 
-`screenHousehold()` in `src/lib/screening.ts` takes a household size, an
-income *range* (not an exact figure — asking for an exact number adds
-friction and shame with no real benefit here), and a hospital's published
-discount tiers, and returns one of four verdicts:
+## What isn't built yet, and why
 
-- **likely** — qualifies even at the top of the stated income range
-- **possible** — qualifies only at the bottom of the range; still worth
-  applying, since applying is free
-- **unlikely** — doesn't qualify under the hospital's stated tiers (never a
-  dead end — routes to FQHCs, payment plans, and self-pay discounts instead)
-- **unknown** — this hospital's policy isn't in the dataset yet
-
-`buildActionPlan()` in `src/lib/results.ts` turns that verdict into a ranked
-list of action cards: the primary verdict, always-on secondary moves
-(request an itemized bill, don't pay until the application is decided, ask
-about the Medicare-rate benchmark if uninsured), and the never-a-dead-end
-fallback when the household doesn't qualify.
-
-Run the tests:
-
-```bash
-npm install
-npm test
-```
-
-## Data you should re-verify before relying on this
-
-Every hospital record carries a `dataConfidence` field — `secondary_source_reported`
-vs. `primary_source_confirmed` — because this sandbox has no external network
-access to fetch and read a hospital's actual FAP PDF directly. Every number
-currently in `src/data/hospitals.ts` was pulled through search-engine
-summaries of secondary sources, not read off the primary document by this
-tool. `lastVerified` is `null` on all of them until a human (or a tool with
-real fetch access) confirms each figure against the hospital's own published
-policy — the app is built to say so honestly rather than pretend otherwise.
-
-Two things worth double-checking specifically:
-
-- University of Michigan Health's tier numbers came from two sources that
-  disagreed (200% vs. 300% FPL) — flagged in that record's `notes` field,
-  not yet resolved.
-- The federal 501(r) Financial Assistance Policy requirement applies to
-  **nonprofit hospitals only**. Michigan's own rate cap (MCL 400.105d — 115%
-  of the Medicare rate for uninsured patients at/below 250% FPL) is broader,
-  since it's tied to Medicaid participation rather than tax status, but it's
-  a weaker guarantee than a full financial assistance policy. The app's copy
-  branches on a hospital's `isNonprofit` field to stay accurate about this.
-
-Also worth verifying independently: the 2026 HHS Federal Poverty Guidelines
-in `src/data/fpl.ts` (pulled the same way, via search rather than a direct
-fetch of aspe.hhs.gov).
-
-## Non-goals for v1
-
-No user accounts or saved history, no insurance-claim appeals, no payments,
-no native apps, no AI-generated eligibility determinations — this is a
-deterministic screener on purpose.
+Steps 1–2 of the build order (data model, unit normalization, the first 10
+biomarkers) don't need any external infrastructure — they're pure,
+testable TypeScript, which is why they're what's here. Step 3 (the
+extraction pipeline) is a different kind of problem: the spec requires
+`"Extraction runs server-side; the client never holds API keys,"` which
+means a real backend, a real OCR/LLM API with its own billing, and — for
+the longitudinal tracking to survive across sessions — real accounts and a
+real database. That's an infrastructure decision, not a coding one, and
+it's not been made yet.
 
 ## Getting started
 
 ```bash
 npm install
-npm run build   # bundles src/app/main.ts -> dist/app.js, warns if over 100KB
-npm run dev      # serves the app locally at http://localhost:4300
-npm test          # screening + results logic, vitest
+npm test          # unit conversion + content library adversarial suite
+npm run build
+npm run dev
 ```
