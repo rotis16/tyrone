@@ -1,8 +1,10 @@
 "use client";
 
 import { useId, useMemo } from "react";
+import { findBiomarkerContent } from "@/data/biomarkerContent";
 import { shouldDrawTrendLine } from "@/lib/trend";
 import type { BiomarkerResult, LabReport } from "@/lib/types";
+import { toSI } from "@/lib/units";
 
 type Point = {
   date: string; // ISO
@@ -43,12 +45,30 @@ export default function BiomarkerChart({
     return results
       .map((r) => {
         const report = reports.find((rep) => rep.id === r.reportId);
+        // The reference range is stored exactly as the lab printed it, in the
+        // printed unit. When the plotted value has been converted to the
+        // canonical unit, the range must be converted by the same factor or
+        // the band is drawn on a different scale than the line — which looks
+        // like a plausible chart while being completely wrong.
+        const converted = r.normalizedValue !== null && r.normalizedUnit !== null;
+        const scale = converted && r.value !== 0 ? (r.normalizedValue as number) / r.value : 1;
+        const content = converted ? findBiomarkerContent(r.biomarkerKey ?? "") : undefined;
+        // An affine conversion (HbA1c) can't be applied to bounds by a bare
+        // ratio, so convert bounds through the real conversion in that case.
+        const convertBound = (bound: number | null): number | null => {
+          if (bound === null) return null;
+          if (!converted) return bound;
+          if (content && content.unitConversion.kind === "affine") {
+            return toSI(bound, content.unitConversion);
+          }
+          return bound * scale;
+        };
         return {
           date: report?.collectionDate ?? "",
           value: r.normalizedValue ?? r.value,
           unit: r.normalizedUnit ?? r.unit,
-          referenceLow: r.referenceLow,
-          referenceHigh: r.referenceHigh,
+          referenceLow: convertBound(r.referenceLow),
+          referenceHigh: convertBound(r.referenceHigh),
           labName: report?.labName ?? null,
           flag: r.flagAsPrinted,
         };
