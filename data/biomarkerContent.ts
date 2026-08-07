@@ -1,5 +1,5 @@
 import type { BiomarkerContent } from "@/lib/types";
-import { affine, linear } from "@/lib/units";
+import { linear } from "@/lib/units";
 
 /**
  * Content library for the v1 starter set: thyroid panel + CBC basics (10
