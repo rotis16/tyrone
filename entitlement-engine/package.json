@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "dev": "npx serve -l 4300 ."
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
+    "playwright": "^1.62.1",
     "typescript": "^5",
     "vitest": "^4"
   }
