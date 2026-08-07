@@ -149,11 +149,17 @@ export function searchHospitals(query: string): Hospital[] {
 
 /**
  * Michigan-specific consumer protection independent of any single hospital's
- * own policy: Public Act 107 caps what a hospital can charge an uninsured
- * patient at/below 250% FPL to no more than 115% of the Medicare rate.
- * Surfaced as a secondary card regardless of screening outcome.
- * Confidence: secondary_source_reported, needs primary-source (MI legislature
- * text) confirmation before being stated as settled fact to end users.
+ * own policy: MCL 400.105d requires a hospital that participates in the
+ * Medicaid program to accept 115% of the Medicare rate as payment in full
+ * from an uninsured patient at or below 250% FPL. Note this is keyed to
+ * Medicaid participation, not nonprofit tax status — unlike the federal
+ * 501(r) financial-assistance-policy requirement (nonprofit-only), this one
+ * plausibly reaches for-profit hospitals too, since nearly all hospitals
+ * participate in Medicaid. Surfaced as a secondary card regardless of
+ * screening outcome.
+ * Confidence: secondary_source_reported, needs primary-source (MI
+ * legislature text) confirmation before being stated as settled fact to end
+ * users.
  */
 export const MICHIGAN_UNINSURED_RATE_CAP_NOTE =
-  "Michigan law (Public Act 107) caps what a hospital can charge an uninsured patient at or below 250% of the federal poverty level to no more than 115% of the Medicare rate for that service — regardless of what any single hospital's own financial assistance policy says.";
+  "Michigan law (MCL 400.105d) requires any hospital that participates in Medicaid to accept no more than 115% of the Medicare rate as full payment from an uninsured patient at or below 250% of the federal poverty level — regardless of what any single hospital's own financial assistance policy says, and regardless of whether that hospital is nonprofit or for-profit.";

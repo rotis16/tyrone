@@ -41,10 +41,13 @@ function primaryVerdictCard(
       : "";
 
   if (result.status === "unknown") {
+    const why = hospital.isNonprofit
+      ? "This hospital is a nonprofit, which means federal law requires it to have a written financial assistance policy, even when it's hard to find. That doesn't mean you don't qualify — it means we can't tell you yet."
+      : "This hospital isn't a nonprofit, so it isn't required by federal law to have a financial assistance policy the way nonprofit hospitals are. Many for-profit hospitals still offer one voluntarily, and Michigan law separately limits what any hospital that participates in Medicaid can charge an uninsured low-income patient — worth asking about both.";
     return {
       id: "verdict",
       verdict: `We don't have ${hospital.name}'s financial assistance policy confirmed yet.`,
-      why: "Every nonprofit hospital is required by federal law to have a written financial assistance policy, even when it's hard to find. That doesn't mean you don't qualify — it means we can't tell you yet.",
+      why,
       deadline: null,
       nextStep: "Call and ask them directly for the policy and an application.",
       nextStepUrl: null,
