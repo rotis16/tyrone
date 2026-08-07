@@ -101,10 +101,9 @@ fetch of aspe.hhs.gov).
 
 ## Non-goals for v1
 
-No user accounts or saved history, no insurance-claim appeals (that's a
-different problem — see the prescription cost triage tool, if it still
-exists in this repo's history), no payments, no native apps, no AI-generated
-eligibility determinations — this is a deterministic screener on purpose.
+No user accounts or saved history, no insurance-claim appeals, no payments,
+no native apps, no AI-generated eligibility determinations — this is a
+deterministic screener on purpose.
 
 ## Getting started
 
