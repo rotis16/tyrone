@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { listReports, listResults } from "./db";
+import { isStorageEphemeral, listReports, listResults } from "./db";
 import type { BiomarkerResult, LabReport } from "./types";
 
 export type LabData = {
@@ -9,6 +9,8 @@ export type LabData = {
   results: BiomarkerResult[];
   loading: boolean;
   error: string | null;
+  /** True when this browser blocked persistent storage — data lasts only for this session. */
+  ephemeral: boolean;
   reload: () => void;
 };
 
@@ -21,6 +23,7 @@ export function useLabData(): LabData {
   const [reports, setReports] = useState<LabReport[]>([]);
   const [results, setResults] = useState<BiomarkerResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [ephemeral, setEphemeral] = useState(false);
   const [nonce, setNonce] = useState(0);
   // Loading is derived rather than set synchronously in the effect: the
   // request generation we've finished loading vs. the one currently wanted.
@@ -36,6 +39,7 @@ export function useLabData(): LabData {
         setReports(r);
         setResults(b);
         setError(null);
+        setEphemeral(isStorageEphemeral());
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -53,7 +57,7 @@ export function useLabData(): LabData {
     };
   }, [nonce]);
 
-  return { reports, results, loading: loadedNonce !== nonce, error, reload };
+  return { reports, results, loading: loadedNonce !== nonce, error, ephemeral, reload };
 }
 
 /** Results for one biomarker, oldest first, paired with the report they came from. */

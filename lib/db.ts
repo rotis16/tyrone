@@ -29,16 +29,44 @@ function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof indexedDB !== "undefined";
 }
 
-let dbPromise: Promise<IDBDatabase> | null = null;
+/**
+ * IndexedDB isn't always available: private browsing modes block it, some
+ * browsers deny it to sandboxed frames, and users can disable site storage.
+ * Rather than leaving the app unusable in those cases, fall back to an
+ * in-memory store for the session — the app works, nothing persists, and the
+ * UI says so plainly via `isStorageEphemeral()`.
+ */
+let memoryFallback = false;
+const memory: Record<string, Map<string, unknown>> = {
+  [STORE_REPORTS]: new Map(),
+  [STORE_RESULTS]: new Map(),
+  [STORE_FILES]: new Map(),
+};
 
-function openDB(): Promise<IDBDatabase> {
-  if (!isBrowser()) {
-    return Promise.reject(new Error("IndexedDB is unavailable outside the browser"));
-  }
+export function isStorageEphemeral(): boolean {
+  return memoryFallback;
+}
+
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+
+function openDB(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
 
-  dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+  if (!isBrowser()) {
+    memoryFallback = true;
+    dbPromise = Promise.resolve(null);
+    return dbPromise;
+  }
+
+  dbPromise = new Promise<IDBDatabase | null>((resolve) => {
+    let request: IDBOpenDBRequest;
+    try {
+      request = indexedDB.open(DB_NAME, DB_VERSION);
+    } catch {
+      memoryFallback = true;
+      resolve(null);
+      return;
+    }
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_REPORTS)) {
@@ -55,45 +83,71 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      memoryFallback = true;
+      resolve(null);
+    };
+    request.onblocked = () => {
+      memoryFallback = true;
+      resolve(null);
+    };
   });
 
   return dbPromise;
 }
 
-function tx<T>(
-  storeNames: string[],
-  mode: IDBTransactionMode,
-  fn: (stores: IDBObjectStore[]) => IDBRequest<T> | void
-): Promise<T | void> {
-  return openDB().then(
-    (db) =>
-      new Promise<T | void>((resolve, reject) => {
-        const transaction = db.transaction(storeNames, mode);
-        const stores = storeNames.map((n) => transaction.objectStore(n));
-        let request: IDBRequest<T> | void;
-        try {
-          request = fn(stores);
-        } catch (err) {
-          reject(err);
-          return;
-        }
-        transaction.oncomplete = () => resolve(request ? request.result : undefined);
-        transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error);
-      })
-  );
+/** Minimal write surface shared by the IndexedDB and in-memory backends. */
+type WriteStore = {
+  put: (value: { id?: string; reportId?: string }) => void;
+  delete: (key: string) => void;
+  clear: () => void;
+};
+
+function memoryStore(name: string, keyField: "id" | "reportId"): WriteStore {
+  return {
+    put: (value) => memory[name].set(String(value[keyField]), value),
+    delete: (key) => void memory[name].delete(key),
+    clear: () => memory[name].clear(),
+  };
 }
 
-function getAll<T>(storeName: string): Promise<T[]> {
-  return openDB().then(
-    (db) =>
-      new Promise<T[]>((resolve, reject) => {
-        const request = db.transaction(storeName, "readonly").objectStore(storeName).getAll();
-        request.onsuccess = () => resolve(request.result as T[]);
-        request.onerror = () => reject(request.error);
-      })
-  );
+function keyFieldFor(storeName: string): "id" | "reportId" {
+  return storeName === STORE_FILES ? "reportId" : "id";
+}
+
+async function tx(
+  storeNames: string[],
+  mode: IDBTransactionMode,
+  fn: (stores: WriteStore[]) => void
+): Promise<void> {
+  const db = await openDB();
+  if (!db) {
+    fn(storeNames.map((n) => memoryStore(n, keyFieldFor(n))));
+    return;
+  }
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(storeNames, mode);
+    const stores = storeNames.map((n) => transaction.objectStore(n) as unknown as WriteStore);
+    try {
+      fn(stores);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+async function getAll<T>(storeName: string): Promise<T[]> {
+  const db = await openDB();
+  if (!db) return Array.from(memory[storeName].values()) as T[];
+  return new Promise<T[]>((resolve, reject) => {
+    const request = db.transaction(storeName, "readonly").objectStore(storeName).getAll();
+    request.onsuccess = () => resolve(request.result as T[]);
+    request.onerror = () => reject(request.error);
+  });
 }
 
 // ---- Reports ----

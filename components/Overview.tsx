@@ -33,8 +33,17 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
+function EphemeralNotice() {
+  return (
+    <p className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+      This browser is blocking saved storage, so anything you add will be kept only until you close
+      this tab. Private browsing and embedded frames often do this.
+    </p>
+  );
+}
+
 export default function Overview() {
-  const { reports, results, loading, error } = useLabData();
+  const { reports, results, loading, error, ephemeral } = useLabData();
 
   if (loading) {
     return <p className="text-sm text-neutral-500 dark:text-neutral-400">Loading your results…</p>;
@@ -50,18 +59,21 @@ export default function Overview() {
 
   if (reports.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-neutral-300 p-8 text-center dark:border-neutral-700">
-        <p className="font-medium">No lab reports yet</p>
-        <p className="mx-auto mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
-          Add your first report and you&apos;ll see each biomarker explained in plain language. Add a
-          second and you&apos;ll start seeing how your numbers move over time.
-        </p>
-        <Link
-          href="/add"
-          className="mt-4 inline-block rounded-xl bg-blue-600 px-5 py-2.5 font-medium text-white hover:bg-blue-700"
-        >
-          Add a lab report
-        </Link>
+      <div className="space-y-3">
+        {ephemeral && <EphemeralNotice />}
+        <div className="rounded-xl border border-dashed border-neutral-300 p-8 text-center dark:border-neutral-700">
+          <p className="font-medium">No lab reports yet</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
+            Add your first report and you&apos;ll see each biomarker explained in plain language. Add
+            a second and you&apos;ll start seeing how your numbers move over time.
+          </p>
+          <Link
+            href="/add"
+            className="mt-4 inline-block rounded-xl bg-blue-600 px-5 py-2.5 font-medium text-white hover:bg-blue-700"
+          >
+            Add a lab report
+          </Link>
+        </div>
       </div>
     );
   }
@@ -75,6 +87,7 @@ export default function Overview() {
 
   return (
     <div className="flex flex-col gap-3">
+      {ephemeral && <EphemeralNotice />}
       {keys.map((key) => {
         const timeline = timelineFor(key, reports, results);
         const latest = timeline[timeline.length - 1];
