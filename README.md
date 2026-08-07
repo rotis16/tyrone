@@ -1,116 +1,116 @@
-# Prescription Cost Triage
+# Financial Help for Your Hospital Bill
 
-A single-page tool that helps someone figure out the cheapest legal way to pay for a
-specific prescription, given their insurance situation — and tells them exactly what
-to say to whom to make it happen.
+A deterministic screener that tells patients what hospital financial assistance
+they likely qualify for — and exactly what to do next. Michigan only, for now.
 
-It is not a price lookup tool. It doesn't fetch live prices. It's a decision engine
-over benefit-design rules (deductibles, copay accumulators, prior authorization,
-patient assistance programs) that produces a ranked, script-backed action plan.
+Every nonprofit hospital in the U.S. is required by federal law (IRC §501(r))
+to have a written Financial Assistance Policy. Most patients are never told it
+exists — research puts the share of eligible patients who actually receive
+assistance at roughly 29%, largely because about half are never informed.
+This closes that gap: answer a few questions, get a ranked, personalized
+action plan with copy-ready scripts.
+
+This is not a chatbot. It's a plain deterministic screener — the value is
+precision and specificity, not conversation.
 
 ## Privacy by construction
 
-No health information ever leaves the browser. There is no backend, no database, no
-accounts, and no analytics. All answers live in React state only, for the duration of
-the page load — nothing is written to `localStorage`, cookies, or any network request.
-This is enforced by the architecture, not a promise: the app has no server-side code
-that could receive or store an answer, and the intake/rules/results pipeline
-(`lib/rules.ts`) is pure client-side computation.
+No answer ever leaves the browser. There's no backend, no accounts, no
+storage, no analytics beyond page views. Everything — the eligibility
+calculation, the script generation — runs as pure client-side functions.
 
 ## Stack
 
-- Next.js (App Router) + TypeScript + Tailwind CSS
-- No backend — deploy target is Vercel as a static/client app
-- Rules and drug data live in typed files under `/data` and `/lib`
-- [Vitest](https://vitest.dev) for the rules engine test suite
+Vanilla TypeScript, hand-written CSS, no framework — bundled with esbuild to
+keep the whole app under a 100KB budget (currently ~28KB total), because the
+person using this is assumed to be on an older phone on a slow connection.
+[Vitest](https://vitest.dev) for the screening-logic test suite.
 
 ## Project structure
 
 ```
-app/                Root layout + the single page (Intake ⇄ Results)
-components/          Intake flow, move cards, script blocks, footer/disclaimer
-lib/types.ts         Answers / Move / Script types
-lib/rules.ts          Pure decision engine — the six gates, fully unit-tested
-lib/scripts.ts        Copy-paste script templates (email/phone/portal message bodies)
-data/drugs.ts          Seeded GLP-1 receptor agonist class drug data
-data/policy.ts          Verified policy constants (state laws, Medicare figures, etc.)
-data/states.ts           US state list
+index.html              Page shell
+src/styles.css           Hand-written CSS, WCAG AA, mobile-first
+src/app/main.ts            Vanilla DOM app: intake flow + results rendering
+src/app/dom.ts               Minimal element-building helper
+src/data/fpl.ts              2026 HHS Federal Poverty Guidelines
+src/data/hospitals.ts        Michigan hospital financial assistance data
+src/data/types.ts            Shared types (Hospital, IncomeRange, etc.)
+src/data/incomeRanges.ts     Income bands used in the intake
+src/data/billAmounts.ts      Bill-amount bands used in the intake
+src/data/answers.ts          Answers shape for the intake flow
+src/lib/screening.ts         Pure eligibility screening logic (tested)
+src/lib/results.ts           Builds the ranked action plan from a screening result
+src/lib/scripts.ts           Phone / email script generators
+scripts/build.mjs            esbuild bundler, warns if over the 100KB budget
 ```
 
-## The decision engine
+## The screening logic
 
-`lib/rules.ts` exports a single pure function, `getMoves(answers: Answers): Move[]`,
-that takes the 8-question answer set and returns a ranked list of 2–5 `Move` objects.
-It implements six gates, in this order of evaluation (not necessarily final rank):
+`screenHousehold()` in `src/lib/screening.ts` takes a household size, an
+income *range* (not an exact figure — asking for an exact number adds
+friction and shame with no real benefit here), and a hospital's published
+discount tiers, and returns one of four verdicts:
 
-1. **Insurance type routing** — no insurance, Medicare, Medicaid, and
-   employer/marketplace each follow materially different logic.
-2. **Generic availability** — if a generic exists, that's almost always the
-   top-ranked move.
-3. **Cash vs. insurance** — the deductible math most people are never told:
-   whether paying cash or running it through insurance actually saves more,
-   based on deductible status and whether the user expects to hit it this year.
-4. **Copay accumulator detection** — triggers on commercial insurance + copay
-   card + brand drug, then branches on self-funded vs. fully insured vs.
-   marketplace to give the right script (HR email vs. state-law citation vs.
-   "this is contested," respectively).
-5. **Coverage friction** — denials, prior authorization, and step therapy each
-   get a distinct script, since step-therapy exceptions are a materially
-   different (and often faster) path than a general appeal.
-6. **Assistance layering** — manufacturer PAPs, charitable foundations, and
-   340B, always evaluated, always ranked last since they're slow but high-value.
+- **likely** — qualifies even at the top of the stated income range
+- **possible** — qualifies only at the bottom of the range; still worth
+  applying, since applying is free
+- **unlikely** — doesn't qualify under the hospital's stated tiers (never a
+  dead end — routes to FQHCs, payment plans, and self-pay discounts instead)
+- **unknown** — this hospital's policy isn't in the dataset yet
 
-Run the test suite with:
+`buildActionPlan()` in `src/lib/results.ts` turns that verdict into a ranked
+list of action cards: the primary verdict, always-on secondary moves
+(request an itemized bill, don't pay until the application is decided, ask
+about the Medicare-rate benchmark if uninsured), and the never-a-dead-end
+fallback when the household doesn't qualify.
+
+Run the tests:
 
 ```bash
+npm install
 npm test
 ```
 
 ## Data you should re-verify before relying on this
 
-Every fact in `/data/policy.ts` and `/data/drugs.ts` carries a `lastVerified` date
-and, where possible, a source comment — but this is exactly the kind of data that
-goes stale:
+Every hospital record carries a `dataConfidence` field — `secondary_source_reported`
+vs. `primary_source_confirmed` — because this sandbox has no external network
+access to fetch and read a hospital's actual FAP PDF directly. Every number
+currently in `src/data/hospitals.ts` was pulled through search-engine
+summaries of secondary sources, not read off the primary document by this
+tool. `lastVerified` is `null` on all of them until a human (or a tool with
+real fetch access) confirms each figure against the hospital's own published
+policy — the app is built to say so honestly rather than pretend otherwise.
 
-- The list of states with anti-accumulator laws (`ANTI_ACCUMULATOR_STATES`) is a
-  **conservative, non-exhaustive subset** verified against several 2026 trackers,
-  not a complete legal reference. It also flags which states are confirmed to
-  extend the ban to copay *maximizers* (most don't — this is a commonly missed
-  distinction).
-- Whether marketplace plans must count manufacturer copay assistance toward the
-  out-of-pocket max is **not a settled 2027 rule** — a 2023 court ruling favored
-  counting it, but federal enforcement since then has been inconsistent and a
-  follow-up rule is still pending. `MARKETPLACE_ACCUMULATOR_RULE_STATUS` reflects
-  this as contested, deliberately, rather than asserting a clean effective date.
-- The Medicare Part D out-of-pocket cap (`MEDICARE_PART_D_OOP_CAP`) is adjusted
-  annually — confirm the current plan year's figure before shipping.
-- Manufacturer PAP income thresholds, copay card annual limits, and which
-  charitable foundation funds are currently open all change frequently and are
-  intentionally *not* hardcoded as numbers — the app tells users to ask, rather
-  than asserting a number that may already be wrong.
+Two things worth double-checking specifically:
 
-The footer renders the `lastVerified` dates for both policy and drug data so this
-staleness is visible to users, not just to developers.
+- University of Michigan Health's tier numbers came from two sources that
+  disagreed (200% vs. 300% FPL) — flagged in that record's `notes` field,
+  not yet resolved.
+- The federal 501(r) Financial Assistance Policy requirement applies to
+  **nonprofit hospitals only**. Michigan's own rate cap (MCL 400.105d — 115%
+  of the Medicare rate for uninsured patients at/below 250% FPL) is broader,
+  since it's tied to Medicaid participation rather than tax status, but it's
+  a weaker guarantee than a full financial assistance policy. The app's copy
+  branches on a hospital's `isNonprofit` field to stay accurate about this.
 
-## Non-goals (v1)
+Also worth verifying independently: the 2026 HHS Federal Poverty Guidelines
+in `src/data/fpl.ts` (pulled the same way, via search rather than a direct
+fetch of aspe.hhs.gov).
 
-No live pricing/price APIs, no real-time benefit checks, no accounts or saved
-history, no appeal-letter generation (routes to Counterforce Health / Fight Health
-Insurance instead), no pharmacy locator, no backend of any kind. The app also never
-states a specific dollar amount the user will pay, and never suggests skipping,
-splitting, or stopping a medication for cost reasons.
+## Non-goals for v1
+
+No user accounts or saved history, no insurance-claim appeals (that's a
+different problem — see the prescription cost triage tool, if it still
+exists in this repo's history), no payments, no native apps, no AI-generated
+eligibility determinations — this is a deterministic screener on purpose.
 
 ## Getting started
 
 ```bash
 npm install
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-```bash
-npm test    # rules engine unit tests (vitest)
-npm run build
-npm run lint
+npm run build   # bundles src/app/main.ts -> dist/app.js, warns if over 100KB
+npm run dev      # serves the app locally at http://localhost:4300
+npm test          # screening + results logic, vitest
 ```
